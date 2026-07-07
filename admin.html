@@ -143,7 +143,7 @@
                         <div>
                             <p class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Water Level Monitor</p>
                             <div class="flex items-baseline space-x-2 mt-1">
-                                <h3 class="text-3xl font-black text-[#0f2d59] dark:text-amber-400" id="admin-water-text">1.25m</h3>
+                                <h3 class="text-2xl font-black text-[#0f2d59] dark:text-amber-400" id="admin-water-text">1.25m</h3>
                                 <span id="water-status-badge" class="text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-500">SAFE</span>
                             </div>
                             <p id="threshold-hint-text" class="text-[10px] font-bold text-slate-600 dark:text-slate-400 mt-1">Alert state starts at 1.50m</p>
@@ -172,8 +172,8 @@
                     <div class="bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 p-6 rounded-2xl shadow-sm flex items-center justify-between">
                         <div>
                             <p class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Hardware Core Health</p>
-                            <h3 class="text-3xl font-black text-emerald-600 dark:text-emerald-400 mt-1">99.8%</h3>
-                            <p class="text-[10px] font-bold text-slate-600 dark:text-slate-400 mt-1">Ping Latency Rate: 42ms</p>
+                            <h3 id="hardware-health-percentage" class="text-3xl font-black text-emerald-600 dark:text-emerald-400 mt-1">99.8%</h3>
+                            <p id="hardware-latency-text" class="text-[10px] font-bold text-slate-600 dark:text-slate-400 mt-1">Ping Latency Rate: 42ms</p>
                         </div>
                             <div id="core-health-badge" class="bg-emerald-500/10 p-3 rounded-xl text-emerald-600 dark:text-emerald-400"><i class="fas fa-heartbeat text-xl"></i></div>
                         </div>
@@ -321,6 +321,7 @@
     </main>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         let adminChartInstance = null;
         let adminMapInstance = null;
@@ -342,10 +343,10 @@
         let systemState = createDefaultSystemState();
         const STATE_KEY = 'mamatidFloodSystemState';
 
-        // Hardware online/offline detection
-        // ESP8266 updates lastUpdated (millis). If no update for a while, mark offline.
-        const CORE_HEALTH_TIMEOUT_MS = 7000; // if no Firebase update within 7s => Offline
-        let lastFirebaseWaterUpdateAt = 0;
+        // 100% FIX: VARIABLES PARA SA PAGBABAGO NG VALUE
+        const CORE_HEALTH_TIMEOUT_MS = 7000; // 7 seconds
+        let lastValueChangeTimestamp = Date.now(); // Dito ibabase kung kailan huling NAGBAGO ang value
+        let previousWaterLevel = null; // Tagatago ng nakaraang value para ikumpara
 
         function createDefaultSystemState() {
             return {
@@ -365,12 +366,12 @@
         function getFirebaseConfig() {
             return window.FIREBASE_CONFIG || {
                  apiKey: "AIzaSyBPv5gHf_2cC5387O5fgaMvrhBmwc7xbpw",
-  authDomain: "iot-based-flood-monitori-652fd.firebaseapp.com",
-  databaseURL: "https://iot-based-flood-monitori-652fd-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "iot-based-flood-monitori-652fd",
-  storageBucket: "iot-based-flood-monitori-652fd.firebasestorage.app",
-  messagingSenderId: "727126054172",
-  appId: "1:727126054172:web:05aeefddafa41f25e7d6d9",
+                 authDomain: "iot-based-flood-monitori-652fd.firebaseapp.com",
+                 databaseURL: "https://iot-based-flood-monitori-652fd-default-rtdb.asia-southeast1.firebasedatabase.app",
+                 projectId: "iot-based-flood-monitori-652fd",
+                 storageBucket: "iot-based-flood-monitori-652fd.firebasestorage.app",
+                 messagingSenderId: "727126054172",
+                 appId: "1:727126054172:web:05aeefddafa41f25e7d6d9",
             };
         }
 
@@ -383,17 +384,29 @@
                     firebase.initializeApp(config);
                     firebaseDb = firebase.database();
                     firebaseReady = true;
-                    // Continuous updates (true realtime)
+                    
                     firebaseDb.ref('mamatidSystem').on('value', (snapshot) => {
                         if (snapshot.exists()) {
-                            applyRemoteState(snapshot.val());
+                            const data = snapshot.val();
+                            const incomingLevel = Number(data.waterLevel || 0);
+
+                            // SILIPIN KUNG NAGBAGO ANG VALUE O HINDI
+                            if (previousWaterLevel === null) {
+                                // Unang takbo pagka-refresh, i-set ang initial baseline
+                                previousWaterLevel = incomingLevel;
+                                lastValueChangeTimestamp = Date.now();
+                            } else if (incomingLevel !== previousWaterLevel) {
+                                // KUNG MAY REAL-TIME CHANGE SA VALUE, I-UPDATE ANG TIMESTAMP!
+                                previousWaterLevel = incomingLevel;
+                                lastValueChangeTimestamp = Date.now();
+                            }
+
+                            applyRemoteState(data);
                         }
                     });
 
-                    // Subscribers live under a separate node (resident-only writes subscribers)
                     firebaseDb.ref('mamatidSystem/subscribers').on('value', (snapshot) => {
                         const subs = snapshot.exists() ? snapshot.val() : {};
-                        // Merge into current admin state so counts stay accurate
                         systemState.subscribers = subs || {};
                         syncAdminUiFromState();
                     });
@@ -417,9 +430,7 @@
         }
 
         function applyRemoteState(payload) {
-            // Apply remote state directly so Admin threshold changes persist consistently
             const baseState = createDefaultSystemState();
-
             systemState = {
                 ...baseState,
                 ...payload,
@@ -429,10 +440,6 @@
                 },
                 subscribers: payload?.subscribers || {}
             };
-
-            // mark last update time for online/offline UI
-            lastFirebaseWaterUpdateAt = Date.now();
-
             syncAdminUiFromState();
         }
 
@@ -476,16 +483,33 @@
 
             const currentLevel = Number(state.waterLevel || 1.25);
 
-            // If hardware is offline, show last reading as stale (don’t evaluate alarms)
+            // DETECT OFFLINE: Kapag lumagpas ng 7 seconds na walang pagbabago sa value (stuck)
             const now = Date.now();
-            const isCoreOnline = (lastFirebaseWaterUpdateAt && (now - lastFirebaseWaterUpdateAt) < CORE_HEALTH_TIMEOUT_MS);
+            const isCoreOnline = (now - lastValueChangeTimestamp) < CORE_HEALTH_TIMEOUT_MS;
 
-            // If offline, do NOT show last reading as 'live'—mark it stale.
-            // Still display the value, but with clear offline indicator.
-            document.getElementById('admin-water-text').innerText = isCoreOnline
-                ? `${currentLevel.toFixed(2)}m`
-                : `-- OFFLINE (${currentLevel.toFixed(2)}m)`;
+            if (isCoreOnline) {
+                document.getElementById('admin-water-text').innerText = `${currentLevel.toFixed(2)}m`;
+                document.getElementById('admin-water-text').className = "text-3xl font-black text-[#0f2d59] dark:text-amber-400";
+                document.getElementById('hardware-health-percentage').innerText = "99.8%";
+                document.getElementById('hardware-health-percentage').className = "text-3xl font-black text-emerald-600 dark:text-emerald-400 mt-1";
+                document.getElementById('hardware-latency-text').innerText = "Ping Latency Rate: 42ms";
+            } else {
+                // FORCE OFFLINE DISPLAY KAPAG STUCK ANG VALUE NG HIGIT SA 7 SECONDS
+                document.getElementById('admin-water-text').innerText = `OFFLINE`;
+                document.getElementById('admin-water-text').className = "text-2xl font-black text-red-600 dark:text-red-500 animate-pulse";
+                document.getElementById('hardware-health-percentage').innerText = "0.0%";
+                document.getElementById('hardware-health-percentage').className = "text-3xl font-black text-red-600 dark:text-red-500 mt-1";
+                document.getElementById('hardware-latency-text').innerText = "Value Frozen / Disconnected (7s)";
+                
+                const card = document.getElementById('water-monitor-card');
+                const badge = document.getElementById('water-status-badge');
+                const iconContainer = document.getElementById('water-icon-container');
 
+                card.className = "bg-white border-2 border-red-500 dark:bg-[#131f3d] p-6 rounded-2xl shadow-sm flex items-center justify-between transition-all duration-300";
+                badge.className = "text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider bg-red-100 text-red-800 border border-red-500";
+                badge.innerText = "NO SIGNAL";
+                iconContainer.className = "bg-red-500/10 p-3 rounded-xl text-red-500";
+            }
 
             const coreBadge = document.getElementById('core-health-badge');
             if (coreBadge) {
@@ -493,20 +517,22 @@
                     coreBadge.className = "bg-emerald-500/10 p-3 rounded-xl text-emerald-600 dark:text-emerald-400";
                     coreBadge.innerHTML = '<i class="fas fa-heartbeat text-xl"></i>';
                 } else {
-                    coreBadge.className = "bg-red-500/10 p-3 rounded-xl text-red-600 dark:text-red-400";
+                    coreBadge.className = "bg-red-500/10 p-3 rounded-xl text-red-600 dark:text-red-400 animate-pulse";
                     coreBadge.innerHTML = '<i class="fas fa-circle-xmark text-xl"></i>';
                 }
             }
 
-            // no alarm evaluation / chart updates when offline
-            // (prevents false ALERT banner if last reading is stale)
-            if (!isCoreOnline) return;
-
-            if (isCoreOnline) {
-                evaluateWaterMonitorSystem(currentLevel);
-                pushChartPoint(currentLevel);
+            if (!isCoreOnline) {
+                runDynamicSoundLoopManager("SAFE");
+                const banner = document.getElementById('global-alert-banner');
+                if (banner) {
+                    banner.className = "fixed top-0 inset-x-0 z-40 text-white font-black text-center py-3.5 px-4 shadow-2xl transition-all duration-500 transform -translate-y-full flex items-center justify-center space-x-3";
+                }
+                return; 
             }
-        
+
+            evaluateWaterMonitorSystem(currentLevel);
+            pushChartPoint(currentLevel);
         }
 
         function pushChartPoint(level) {
@@ -525,8 +551,13 @@
             if (waterSimulationTimer) clearInterval(waterSimulationTimer);
             waterSimulationTimer = setInterval(() => {
                 const nextLevel = Math.max(0.3, Math.min(4.9, (systemState.waterLevel || 1.25) + (Math.random() - 0.5) * 0.3 + Number(systemState.offsetMeters || 0) * 0.02));
+                
+                // Gayahin ang pagbabago ng data para sa simulation kapag walang hardware
+                if (nextLevel !== previousWaterLevel) {
+                    previousWaterLevel = nextLevel;
+                    lastValueChangeTimestamp = Date.now();
+                }
                 persistState({ waterLevel: nextLevel });
-                pushChartPoint(nextLevel);
             }, Math.max(1000, Number(systemState.intervalSeconds || 2) * 1000));
         }
 
@@ -547,7 +578,6 @@
             setTimeout(() => document.getElementById('admin-announcement-status').innerText = ' ', 2000);
         }
 
-        // Modal trigger responder logic
         function respondAudioPermission(allowed) {
             isAudioAllowed = allowed;
             if (allowed) {
@@ -791,12 +821,12 @@
         }
 
         window.addEventListener('DOMContentLoaded', () => {
-            // Keep online/offline badge accurate even when Firebase stops callbacks.
+            // GLOBAL INTERVAL CHECKER (Tumatakbo bawat segundo)
             setInterval(() => {
                 try {
                     syncAdminUiFromState();
                 } catch (e) {
-                    // ignore
+                    console.error("Loop Error:", e);
                 }
             }, 1000);
 
@@ -821,8 +851,6 @@
 
             initRealtimeSync();
 
-            // If Firebase is available (real IoT), do NOT run simulation to ensure admin shows real waterLevel.
-            // restartWaterSimulation() stays as fallback when Firebase is disconnected.
             setTimeout(() => {
                 if (!firebaseReady) {
                     restartWaterSimulation();
