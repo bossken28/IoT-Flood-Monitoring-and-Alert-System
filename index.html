@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cabuyao Flood Portal - Brgy. Mamatid</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // In-activate ang class-based dark mode ng Tailwind
+        tailwind.config = {
+            darkMode: 'class'
+        }
+    </script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+    <style>
+        .water-wave {
+            animation: wave 4s ease-in-out infinite alternate;
+        }
+        @keyframes wave {
+            0% { transform: translateY(3px) scaleY(0.97); }
+            100% { transform: translateY(-3px) scaleY(1.03); }
+        }
+        .tab-content {
+            opacity: 0;
+            transform: translateY(5px);
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+            opacity: 1;
+            transform: translateY(0);
+        }
+        @keyframes pulse-fast {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        .animate-pulse-fast {
+            animation: pulse-fast 0.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+    </style>
+</head>
+<body class="bg-[#f0f4f8] text-slate-900 dark:bg-[#0b132b] dark:text-slate-300 font-sans min-h-screen flex flex-col antialiased transition-colors duration-300">
+
+    <div id="resident-audio-modal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <div class="bg-white dark:bg-[#131f3d] max-w-md w-full rounded-2xl p-6 shadow-2xl border-2 border-[#e0a916] text-center transform transition-all">
+            <div class="bg-amber-500/10 dark:bg-amber-500/20 text-[#e0a916] w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="fas fa-volume-up text-2xl"></i>
+            </div>
+            <h3 class="text-xl font-black text-[#0f2d59] dark:text-white uppercase tracking-wide">Resident Alert Audio</h3>
+            <p class="text-sm text-slate-600 dark:text-slate-400 my-4 leading-relaxed">
+                Enable audio alerts so the resident portal can play sirens and warning sounds when flood levels become dangerous.
+            </p>
+            <div class="flex space-x-3 mt-6">
+                <button onclick="respondResidentAudioPermission(false)" class="flex-1 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold py-3 rounded-xl text-xs uppercase tracking-wider transition cursor-pointer">
+                    Mute Sounds
+                </button>
+                <button onclick="respondResidentAudioPermission(true)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3 rounded-xl text-xs uppercase tracking-wider transition shadow-lg cursor-pointer">
+                    Allow Audio
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="resident-alert-banner" class="fixed top-0 inset-x-0 z-50 text-white font-black text-center py-3.5 px-4 shadow-2xl transition-all duration-500 transform -translate-y-full flex items-center justify-center space-x-3">
+        <i class="fas fa-exclamation-triangle text-xl animate-bounce"></i>
+        <span id="resident-alert-message" class="text-xs md:text-sm uppercase tracking-wider">Flood alert status updated</span>
+        <button onclick="dismissResidentBanner()" class="bg-black/30 hover:bg-black/60 text-white px-3 py-1 rounded-lg text-xs uppercase font-black transition-all cursor-pointer border border-white/20">Dismiss</button>
+    </div>
+
+    <div id="resident-notification-popup" class="fixed right-4 bottom-4 z-[55] hidden max-w-sm w-[92%] rounded-2xl border border-white/20 bg-slate-900/95 text-white shadow-2xl backdrop-blur-sm">
+        <div class="flex items-start justify-between p-4 gap-3">
+            <div class="flex items-start gap-3">
+                <div id="resident-popup-icon" class="mt-0.5 text-amber-400 text-lg">
+                    <i class="fas fa-bell"></i>
+                </div>
+                <div>
+                    <p id="resident-popup-title" class="text-sm font-black uppercase tracking-wide">Flood Alert</p>
+                    <p id="resident-popup-text" class="text-sm text-slate-300 mt-1">A new warning has been issued for your area.</p>
+                </div>
+            </div>
+            <button onclick="hideResidentPopup()" class="text-slate-400 hover:text-white transition">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- TOP NAVIGATION BAR -->
+    <nav class="bg-[#0f2d59] dark:bg-[#091933] border-b-4 border-[#e0a916] sticky top-0 z-50 shadow-md transition-colors duration-300">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-20">
+                
+                <div class="flex items-center space-x-3">
+                    <div class="bg-gradient-to-br from-[#e0a916] to-[#f4c430] text-[#0f2d59] w-11 h-11 rounded-xl flex items-center justify-center font-black text-xl shadow">
+                        <i class="fas fa-bell"></i>
+                    </div>
+                    <div>
+                        <h1 class="font-black text-base sm:text-lg tracking-wide text-[#e0a916] leading-none">WoW Mamatid</h1>
+                        <p class="text-xs text-slate-200 dark:text-slate-400 font-bold uppercase mt-1 tracking-wider">Brgy. Mamatid • Flood Monitoring System</p>
+                    </div>
+                </div>
+
+                <div class="hidden md:flex items-center space-x-2">
+                    <button onclick="switchTab('dashboard')" id="btn-dashboard" class="nav-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition bg-[#e0a916] text-[#0f2d59] shadow">Dashboard</button>
+                    <button onclick="switchTab('telemetry')" id="btn-telemetry" class="nav-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition text-slate-200 hover:bg-[#1a447c] hover:text-white dark:text-slate-300 dark:hover:bg-[#132f5c]">Live Status</button>
+                    <button onclick="switchTab('map')" id="btn-map" class="nav-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition text-slate-200 hover:bg-[#1a447c] hover:text-white dark:text-slate-300 dark:hover:bg-[#132f5c]">Hazard Map</button>
+                    <button onclick="switchTab('announcements')" id="btn-announcements" class="nav-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition text-slate-200 hover:bg-[#1a447c] hover:text-white dark:text-slate-300 dark:hover:bg-[#132f5c]">Advisories</button>
+                    <button onclick="switchTab('sms')" id="btn-sms" class="nav-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition text-[#e0a916] bg-[#0c2447] border-2 border-[#e0a916]/40 hover:bg-[#15396b] dark:bg-[#07152b]">SMS Alert</button>
+                    
+                    <!-- DARK MODE TOGGLE (DESKTOP) -->
+                    <button onclick="toggleDarkMode()" class="text-slate-200 hover:text-[#e0a916] bg-[#0c2447] dark:bg-[#132f5c] border border-slate-500/30 p-2.5 rounded-xl transition text-sm flex items-center justify-center w-10 h-10 shadow-sm" title="Toggle Theme">
+                        <i id="theme-icon-desktop" class="fas fa-moon"></i>
+                    </button>
+                </div>
+
+                <div class="flex md:hidden items-center space-x-2">
+                    <!-- DARK MODE TOGGLE (MOBILE CONTROLLER BAR) -->
+                    <button onclick="toggleDarkMode()" class="text-slate-200 bg-[#0c2447] dark:bg-[#132f5c] border border-slate-500/30 p-2.5 rounded-xl transition text-base w-11 h-11 flex items-center justify-center">
+                        <i id="theme-icon-mobile" class="fas fa-moon"></i>
+                    </button>
+                    <button onclick="toggleMobileMenu()" type="button" class="bg-[#0c2447] inline-flex items-center justify-center p-3 rounded-xl text-[#e0a916] hover:text-white hover:bg-[#1a447c] focus:outline-none border-2 border-[#e0a916]/30">
+                        <i id="burger-icon" class="fas fa-bars text-xl"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="mobile-menu" class="hidden bg-[#0c2447] dark:bg-[#07152b] border-t-2 border-[#e0a916]/30 px-4 py-3 space-y-2 shadow-2xl">
+            <button onclick="switchTab('dashboard')" id="mb-btn-dashboard" class="mb-nav-btn w-full text-left flex items-center space-x-4 px-4 py-4 rounded-xl text-base font-black transition bg-[#e0a916] text-[#0f2d59]">
+                <i class="fas fa-chart-pie w-6 text-center text-lg"></i><span>Website Overview</span>
+            </button>
+            <button onclick="switchTab('telemetry')" id="mb-btn-telemetry" class="mb-nav-btn w-full text-left flex items-center space-x-4 px-4 py-4 rounded-xl text-base font-bold transition text-slate-200 hover:bg-[#133463]">
+                <i class="fas fa-wave-square w-6 text-center text-lg"></i><span>Live Telemetry Status</span>
+            </button>
+            <button onclick="switchTab('map')" id="mb-btn-map" class="mb-nav-btn w-full text-left flex items-center space-x-4 px-4 py-4 rounded-xl text-base font-bold transition text-slate-200 hover:bg-[#133463]">
+                <i class="fas fa-map-marked-alt w-6 text-center text-lg"></i><span>Hazard Index Map</span>
+            </button>
+            <button onclick="switchTab('announcements')" id="mb-btn-announcements" class="mb-nav-btn w-full text-left flex items-center space-x-4 px-4 py-4 rounded-xl text-base font-bold transition text-slate-200 hover:bg-[#133463]">
+                <i class="fas fa-bullhorn w-6 text-center text-lg"></i><span>Public Advisories</span>
+            </button>
+            <button onclick="switchTab('sms')" id="mb-btn-sms" class="mb-nav-btn w-full text-left flex items-center space-x-4 px-4 py-4 rounded-xl text-base font-black transition text-[#e0a916] bg-[#081930] border border-[#e0a916]/30">
+                <i class="fas fa-sms w-6 text-center text-lg"></i><span>E-Siren Registration</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- MAIN BODY AREA -->
+    <main class="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+
+        <header class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b-2 border-slate-300 dark:border-slate-700 pb-4">
+
+            <div>
+                <span id="top-breadcrumbs" class="text-[#0f2d59] dark:text-amber-400 text-xs font-bold uppercase tracking-wider block">MAMATID COMMUNITY / Dashboard</span>
+                <h2 id="top-title" class="text-2xl sm:text-3xl font-black text-[#0f2d59] dark:text-slate-100 tracking-tight mt-1">Website Overview</h2>
+            </div>
+            <div class="flex flex-wrap gap-2 text-sm font-black">
+                <div class="bg-emerald-100 border-2 border-emerald-500 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 px-4 py-2 rounded-xl flex items-center shadow-sm">
+                    <span class="w-3 h-3 bg-emerald-600 rounded-full inline-block mr-2 animate-pulse"></span>
+                    <span id="system-status-text">NORMAL STATUS</span>
+                </div>
+                <div class="bg-white border-2 border-slate-300 dark:bg-[#131f3d] dark:border-slate-700 text-slate-700 dark:text-slate-300 px-4 py-2 rounded-xl font-mono shadow-sm">
+                    Updated: <span id="last-updated" class="text-slate-900 dark:text-slate-100 font-bold">Real-time</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- ================= TAB: Website Overview ================= -->
+        <div id="tab-dashboard" class="tab-content active space-y-6">
+            
+            <div class="bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 rounded-2xl p-6 lg:p-8 space-y-4 shadow-sm relative overflow-hidden">
+                <div class="flex items-center space-x-3 text-[#0f2d59] dark:text-amber-400">
+                    <i class="fas fa-info-circle text-xl text-[#e0a916]"></i>
+                    <h4 class="text-xs sm:text-sm font-black uppercase tracking-wider">Project Information</h4>
+                </div>
+                <h3 class="text-xl sm:text-2xl font-black text-[#0f2d59] dark:text-slate-100">IoT-Based Flood Monitoring And Alert System</h3>
+                <p class="text-base sm:text-lg text-slate-700 dark:text-slate-300 leading-relaxed">
+                    Initiated under the Brgy Mamatid City of Cabuyao Laguna, this localized IoT flood alert system serves as Barangay Mamatid's structural early warning and monitoring protocol.
+                </p>
+                <p class="text-base sm:text-lg text-slate-700 dark:text-slate-300 leading-relaxed">
+                    This platform coordinates with live sensor which directly from specialized ultrasonic sensors positioned across critical river channels. Data is refreshed continuously to deliver proactive situational awareness to communities before severe water level changes occur.
+                </p>
+            </div>
+
+            <!-- MAIN LANDING GRID INTERFACES -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div class="bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 rounded-2xl p-5 flex items-center justify-between shadow-sm">
+                    <div>
+                        <p class="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Hardware Connection</p>
+                        <h4 class="text-lg font-black text-emerald-600 dark:text-emerald-400 mt-1">Online / Active</h4>
+                    </div>
+                    <i class="fas fa-satellite-dish text-3xl text-slate-300 dark:text-slate-600"></i>
+                </div>
+                <div class="bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 rounded-2xl p-5 flex items-center justify-between shadow-sm">
+                    <div>
+                        <p class="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Weather Information</p>
+                        <h4 class="text-lg font-black text-slate-800 dark:text-slate-200 mt-1">29°C — Light Rain</h4>
+                    </div>
+                    <i class="fas fa-cloud-rain text-3xl text-[#1a447c]/30 dark:text-slate-600"></i>
+                </div>
+
+
+            </div>
+        </div>
+
+        <!-- ================= TAB: LIVE TELEMETRY ================= -->
+        <div id="tab-telemetry" class="tab-content space-y-6">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
+                <div class="bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 rounded-2xl p-6 flex flex-col items-center justify-between text-center shadow-sm min-h-[360px]">
+                    <h4 class="text-sm font-black text-[#0f2d59] dark:text-amber-400 uppercase border-b border-slate-200 dark:border-slate-700 pb-2 w-full text-left">Water Level Indicator</h4>
+                    
+                    <div class="relative w-36 h-56 bg-slate-100 dark:bg-[#0d162b] border-4 border-slate-300 dark:border-slate-700 rounded-b-2xl overflow-hidden shadow-inner flex flex-col justify-end my-3">
+                        <div id="dynamic-water" class="w-full bg-gradient-to-t from-blue-600 to-cyan-500 transition-all duration-1000 water-wave" style="height: 25%;">
+                            <div id="gauge-percent" class="text-center text-white font-black text-lg drop-shadow-md mb-2">1.20m</div>
+                        </div>
+                    </div>
+
+                    <div class="w-full grid grid-cols-4 gap-1 text-[11px] font-black uppercase text-white shadow-sm">
+                        <span class="bg-emerald-600 p-1.5 rounded">Safe</span>
+                        <span class="bg-yellow-500 p-1.5 rounded opacity-30 text-slate-900 dark:text-slate-100" id="badge-warn">Alert</span>
+                        <span class="bg-orange-500 p-1.5 rounded opacity-30" id="badge-danger">Danger</span>
+                        <span class="bg-red-600 p-1.5 rounded opacity-30" id="badge-crit">Critical</span>
+                    </div>
+                </div>
+
+                <div class="bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 rounded-2xl p-6 lg:col-span-2 flex flex-col justify-between shadow-sm min-h-[360px]">
+                    <h4 class="text-sm font-black text-[#0f2d59] dark:text-amber-400 uppercase border-b border-slate-200 dark:border-slate-700 pb-2"><i class="fas fa-chart-area text-[#e0a916] mr-1.5"></i>Hydrograph Log (Past 15 mins)</h4>
+                    <div class="h-64 relative w-full mt-3">
+                        <canvas id="liveChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= TAB: HAZARD INDEX MAP ================= -->
+        <div id="tab-map" class="tab-content">
+            <div class="bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 p-4 rounded-2xl shadow-md">
+                <div id="leaflet-map" class="w-full h-[420px] rounded-xl z-10 border border-slate-300 dark:border-slate-700"></div>
+            </div>
+        </div>
+
+        <!-- ================= TAB: BULLETINS & HOTLINES ================= -->
+        <div id="tab-announcements" class="tab-content space-y-6">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                
+                <!-- EMERGENCY RESPONSE CHANNELS -->
+                <div class="space-y-4">
+                    <h4 class="text-sm font-black text-[#0f2d59] dark:text-amber-400 uppercase border-b-2 border-slate-300 dark:border-slate-700 pb-2">Emergency Response Hotlines (Tap to Dial)</h4>
+                    <div class="grid grid-cols-1 gap-3">
+                        
+                        <!-- CDRRMO CARD -->
+                        <div class="bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm border-l-8 border-l-red-600">
+                            <div>
+                                <h5 class="font-black text-slate-900 dark:text-slate-100 text-base">Cabuyao Command Center (CDRRMO)</h5>
+                                <p class="text-xs text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mt-0.5">24/7 Operations & Rescue Dispatches</p>
+                            </div>
+                            <div class="flex flex-col xs:flex-row gap-2 w-full sm:w-auto shrink-0">
+                                <a href="tel:0495080831" class="bg-slate-900 hover:bg-slate-800 dark:bg-[#071124] text-white font-mono font-black text-center px-4 py-3 rounded-xl text-sm flex items-center justify-center space-x-2 shadow-sm transition">
+                                    <i class="fas fa-phone-alt text-red-500"></i> <span>(049) 508-0831</span>
+                                </a>
+                                <a href="tel:+639985934524" class="bg-[#0f2d59] hover:bg-[#15396b] dark:bg-amber-500 dark:hover:bg-amber-600 dark:text-slate-900 text-[#e0a916] font-mono font-black text-center px-4 py-3 rounded-xl text-sm flex items-center justify-center space-x-2 shadow-sm transition">
+                                    <i class="fas fa-mobile-alt"></i> <span>0998-593-4524</span>
+                                </a>
+                            </div>
+                        </div>
+
+                        <!-- PNP CARD -->
+                        <div class="bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm border-l-8 border-l-blue-700">
+                            <div>
+                                <h5 class="font-black text-slate-900 dark:text-slate-100 text-base">Cabuyao City Police Station (PNP)</h5>
+                                <p class="text-xs text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mt-0.5">Law Enforcement & Tactical Protection</p>
+                            </div>
+                            <div class="flex flex-col xs:flex-row gap-2 w-full sm:w-auto shrink-0">
+                                <a href="tel:0495312111" class="bg-slate-900 hover:bg-slate-800 dark:bg-[#071124] text-white font-mono font-black text-center px-4 py-3 rounded-xl text-sm flex items-center justify-center space-x-2 shadow-sm transition">
+                                    <i class="fas fa-phone-alt text-blue-500"></i> <span>(049) 531-2111</span>
+                                </a>
+                                <a href="tel:+639985985671" class="bg-[#0f2d59] hover:bg-[#15396b] dark:bg-amber-500 dark:hover:bg-amber-600 dark:text-slate-900 text-[#e0a916] font-mono font-black text-center px-4 py-3 rounded-xl text-sm flex items-center justify-center space-x-2 shadow-sm transition">
+                                    <i class="fas fa-mobile-alt"></i> <span>0998-598-5671</span>
+                                </a>
+                            </div>
+                        </div>
+
+                        <!-- BFP CARD -->
+                        <div class="bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm border-l-8 border-l-orange-500">
+                            <div>
+                                <h5 class="font-black text-slate-900 dark:text-slate-100 text-base">Bureau of Fire Protection (BFP)</h5>
+                                <p class="text-xs text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mt-0.5">Fire Emergencies & Specialized Extractions</p>
+                            </div>
+                            <div class="flex flex-col xs:flex-row gap-2 w-full sm:w-auto shrink-0">
+                                <a href="tel:0495311911" class="bg-slate-900 hover:bg-slate-800 dark:bg-[#071124] text-white font-mono font-black text-center px-4 py-3 rounded-xl text-sm flex items-center justify-center space-x-2 shadow-sm transition">
+                                    <i class="fas fa-phone-alt text-orange-500"></i> <span>(049) 531-1911</span>
+                                </a>
+                                <a href="tel:+639156021815" class="bg-[#0f2d59] hover:bg-[#15396b] dark:bg-amber-500 dark:hover:bg-amber-600 dark:text-slate-900 text-[#e0a916] font-mono font-black text-center px-4 py-3 rounded-xl text-sm flex items-center justify-center space-x-2 shadow-sm transition">
+                                    <i class="fas fa-mobile-alt"></i> <span>0915-602-1815</span>
+                                </a>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- EVACUATION HUBS -->
+                <div class="space-y-4">
+                    <h4 class="text-sm font-black text-[#0f2d59] dark:text-amber-400 uppercase border-b-2 border-slate-300 dark:border-slate-700 pb-2">Designated Evacuation Hubs (Tap to Navigate)</h4>
+                    <div class="grid grid-cols-1 gap-3">
+                        
+                        <!-- HUB 1 -->
+                        <a href="https://www.google.com/maps/search/?api=1&query=Mamatid+Central+Elementary+School+Cabuyao+Laguna" target="_blank" class="bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 rounded-2xl p-5 block shadow-sm hover:border-emerald-500 hover:shadow-md transition active:scale-[0.99] group">
+                            <div class="flex items-start justify-between">
+                                <div class="space-y-1">
+                                    <h5 class="font-black text-slate-900 dark:text-slate-100 text-base group-hover:text-emerald-700 dark:group-hover:text-emerald-400 transition">Mamatid Central Elementary School</h5>
+                                    <p class="text-xs text-slate-600 dark:text-slate-400 font-medium"><i class="fas fa-map-marker-alt text-red-500 mr-1 text-sm"></i> San Guillermo St., Barangay Mamatid, Cabuyao, Laguna</p>
+                                </div>
+                                <div class="bg-emerald-50 border border-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 text-xs px-2.5 py-1.5 rounded-xl font-black uppercase tracking-wider shrink-0 flex items-center space-x-1">
+                                    <i class="fas fa-directions text-sm"></i> <span class="hidden xs:inline">Map</span>
+                                </div>
+                            </div>
+                            <div class="flex justify-between text-xs mt-4 font-black text-slate-700 dark:text-slate-400 uppercase tracking-wider">
+                                <span>Density Capacity: 120 / 500</span>
+                                <span class="text-emerald-600 dark:text-emerald-400">Space Open</span>
+                            </div>
+                            <div class="w-full bg-slate-100 dark:bg-[#0d162b] h-3 rounded-full mt-2 overflow-hidden shadow-inner border border-slate-200 dark:border-slate-700">
+                                <div class="bg-gradient-to-r from-emerald-500 to-teal-500 h-full w-[24%]"></div>
+                            </div>
+                        </a>
+
+                        <!-- HUB 2 -->
+                        <a href="https://www.google.com/maps/search/?api=1&query=Barangay+Mamatid+Gymnasium+Heritage+Homes+Cabuyao" target="_blank" class="bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 rounded-2xl p-5 block shadow-sm hover:border-emerald-500 hover:shadow-md transition active:scale-[0.99] group">
+                            <div class="flex items-start justify-between">
+                                <div class="space-y-1">
+                                    <h5 class="font-black text-slate-900 dark:text-slate-100 text-base group-hover:text-emerald-700 dark:group-hover:text-emerald-400 transition">Barangay Mamatid Multi-Purpose Gym</h5>
+                                    <p class="text-xs text-slate-600 dark:text-slate-400 font-medium"><i class="fas fa-map-marker-alt text-red-500 mr-1 text-sm"></i> Phase 1, Heritage Homes, Barangay Mamatid, Cabuyao</p>
+                                </div>
+                                <div class="bg-emerald-50 border border-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 text-xs px-2.5 py-1.5 rounded-xl font-black uppercase tracking-wider shrink-0 flex items-center space-x-1">
+                                    <i class="fas fa-directions text-sm"></i> <span class="hidden xs:inline">Map</span>
+                                </div>
+                            </div>
+                            <div class="flex justify-between text-xs mt-4 font-black text-slate-700 dark:text-slate-400 uppercase tracking-wider">
+                                <span>Density Capacity: 45 / 300</span>
+                                <span class="text-emerald-600 dark:text-emerald-400">Space Open</span>
+                            </div>
+                            <div class="w-full bg-slate-100 dark:bg-[#0d162b] h-3 rounded-full mt-2 overflow-hidden shadow-inner border border-slate-200 dark:border-slate-700">
+                                <div class="bg-gradient-to-r from-emerald-500 to-teal-500 h-full w-[15%]"></div>
+                            </div>
+                        </a>
+
+                    </div>
+                </div>
+                <div class="lg:col-span-2">
+                    <div id="resident-announcement-box" class="bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 rounded-2xl p-6 shadow-sm mt-4">
+                        <h4 class="text-sm font-black text-[#0f2d59] dark:text-amber-400 uppercase tracking-wide">Official Announcement</h4>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Public advisory from MAMATID COMMUNITY.</p>
+                        <p id="resident-announcement-text" class="text-base text-slate-700 dark:text-slate-300 mt-4 font-bold">No announcements at this time.</p>
+                        <div class="flex items-center justify-between mt-4">
+                            <p id="resident-announcement-timestamp" class="text-xs text-slate-400 dark:text-slate-500">Last updated: —</p>
+                            <button id="resident-ack-btn" onclick="acknowledgeAnnouncement()" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-black px-3 py-1 rounded-xl">Acknowledge</button>
+                        </div>
+                    </div>
+                        <div class="grid gap-4 mt-4">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= TAB: SMS REGISTRATION ================= -->
+        <div id="tab-sms" class="tab-content max-w-md mx-auto w-full">
+            <div class="bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 rounded-2xl p-6 lg:p-8 space-y-5 shadow-md">
+                <div class="text-center space-y-2">
+                    <h4 class="text-xl font-black text-[#0f2d59] dark:text-slate-100">Mag-subscribe sa Flood Alerts</h4>
+                    <p class="text-sm text-slate-600 dark:text-slate-400">Enter your 11-digit mobile network number to automatically subscribe to critical water level threshold notifications.</p>
+                </div>
+
+                <form onsubmit="registerSMS(event)" class="space-y-4">
+                    <div class="space-y-2">
+                        <label class="block text-xs font-black text-slate-700 dark:text-slate-300 uppercase">Mobile Number (Format: 09XXXXXXXXX)</label>
+                        <input 
+                            type="text" 
+                            id="sms-phone-input" 
+                            required 
+                            maxlength="11" 
+                            inputmode="numeric"
+                            oninput="this.value = this.value.replace(/[^0-9]/g, '');"
+                            placeholder="Enter contact number..." 
+                            class="w-full bg-slate-50 dark:bg-[#0d162b] border-2 border-slate-300 dark:border-slate-700 rounded-xl px-4 py-4 font-mono font-bold tracking-widest text-center text-slate-900 dark:text-slate-100 text-lg focus:outline-none focus:border-[#0f2d59] dark:focus:border-amber-400 shadow-inner"
+                        >
+                    </div>
+
+                    <button type="submit" class="w-full bg-[#e0a916] hover:bg-[#f4c430] dark:bg-amber-500 dark:hover:bg-amber-600 text-[#0f2d59] font-black py-4 rounded-xl text-sm tracking-wider uppercase transition shadow-md flex items-center justify-center space-x-2">
+                        <i class="fas fa-paper-plane text-base"></i>
+                        <span>Activate Alerts</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="bg-[#0f2d59] dark:bg-[#071124] border-t-2 border-[#e0a916] py-5 mt-auto text-center text-xs text-slate-300 dark:text-slate-400 font-bold transition-colors duration-300">
+        City Government of Cabuyao • Barangay Mamatid IoT Emergency Network (2026)
+    </footer>
+
+    <!-- ENGINE SCRIPTS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        let liveChartInstance = null;
+        let leafletMapInstance = null;
+        let firebaseDb = null;
+        let firebaseReady = false;
+        let residentState = createDefaultState();
+        const STATE_KEY = 'mamatidFloodSystemState';
+        let audioCtx = null;
+        let soundInterval = null;
+        let currentResidentAlertState = 'SAFE';
+        let isResidentAudioAllowed = false;
+        let userDismissedResidentBanner = false;
+        let lastResidentAlertState = '';
+
+        // Hardware online/offline detection (for resident UI)
+        const CORE_HEALTH_TIMEOUT_MS = 7000; // if no Firebase update within 7s => Offline
+        let lastFirebaseResidentUpdateAt = 0;
+        let lastPayloadReceivedAt = 0; // browser-time age (ms)
+        let lastPayloadDeviceStatusUpdatedAt = null; // millis-based from ESP8266
+
+
+
+
+
+        function createDefaultState() {
+            return {
+                waterLevel: 1.20,
+                thresholds: { alert: 1.5, danger: 2.5, critical: 4.0 },
+                automationEnabled: true,
+                subscribers: {},
+                lastBroadcast: '',
+                lastOperation: 'System monitoring active',
+                lastUpdated: Date.now()
+            };
+        }
+
+        function getFirebaseConfig() {
+            return window.FIREBASE_CONFIG || {
+                apiKey: "AIzaSyBPv5gHf_2cC5387O5fgaMvrhBmwc7xbpw",
+  authDomain: "iot-based-flood-monitori-652fd.firebaseapp.com",
+  databaseURL: "https://iot-based-flood-monitori-652fd-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "iot-based-flood-monitori-652fd",
+  storageBucket: "iot-based-flood-monitori-652fd.firebasestorage.app",
+  messagingSenderId: "727126054172",
+  appId: "1:727126054172:web:05aeefddafa41f25e7d6d9",
+            };
+        }
+
+        function initResidentSync() {
+            const config = getFirebaseConfig();
+            const hasRealFirebaseConfig = !!(config.projectId && config.databaseURL && String(config.databaseURL).startsWith('https://'));
+
+            // Auto-recovery (UI sync only):
+            // IMPORTANT: Do NOT use once(value) to refresh ONLINE timestamps.
+            // It can keep the device looking Online if Firebase still returns cached data.
+            const RECOVERY_INTERVAL_MS = 5000;
+
+            setInterval(() => {
+                try {
+                    if (!firebaseReady || !firebaseDb) return;
+
+                    firebaseDb.ref('mamatidSystem').once('value').then((snapshot) => {
+                        if (!snapshot.exists()) return;
+                        const payload = snapshot.val();
+
+                        // Only update residentState display (waterLevel/thresholds/etc),
+                        // but do NOT refresh freshness tokens.
+                        applyRemoteStateReadOnly(payload);
+                    }).catch((err) => {
+                        // ignore
+                    });
+                } catch (e) {
+                    // ignore
+                }
+            }, RECOVERY_INTERVAL_MS);
+
+
+
+
+            if (hasRealFirebaseConfig) {
+                try {
+                    firebase.initializeApp(config);
+                    firebaseDb = firebase.database();
+                    firebaseReady = true;
+                    firebaseDb.ref('mamatidSystem').on('value', (snapshot) => {
+                        if (snapshot.exists()) {
+                            applyRemoteState(snapshot.val());
+                        }
+                    });
+
+                    // Load subscribers separately (resident-only reads them if needed)
+                    firebaseDb.ref('mamatidSystem/subscribers').on('value', (snapshot) => {
+                        const subs = snapshot.exists() ? snapshot.val() : {};
+                        residentState.subscribers = subs || {};
+                    });
+
+                    // NOTE: Do NOT force lastFirebaseResidentUpdateAt=0 here.
+                    // It must age out only when the main mamatidSystem updates stop.
+                    // For correctness, we update lastFirebaseResidentUpdateAt only in applyRemoteState().
+                } catch (error) {
+                    console.warn('Firebase unavailable, using local sync.', error);
+                    firebaseReady = false;
+                }
+            }
+
+            // Always set up periodic UI re-evaluation so OFFLINE state flips even if no new UI triggers.
+            setInterval(() => {
+                try {
+                    // Keep UI synced: if Firebase reconnects, this will flip ONLINE automatically.
+                    updateResidentUi();
+                } catch (e) {
+                    // ignore
+                }
+            }, 1000);
+
+
+            if (!firebaseReady) {
+                const savedState = localStorage.getItem(STATE_KEY);
+                if (savedState) {
+                    // Load snapshot for UI display, but force OFFLINE until Firebase reconnects.
+                    const payload = JSON.parse(savedState);
+                    residentState = {
+                        ...createDefaultState(),
+                        ...payload,
+                        thresholds: {
+                            ...createDefaultState().thresholds,
+                            ...(payload?.thresholds || {})
+                        },
+                        subscribers: payload?.subscribers || {}
+                    };
+                    lastFirebaseResidentUpdateAt = 0;
+                    updateResidentUi();
+
+                    // stop any later use of cached ONLINE state
+                    firebaseReady = false;
+                }
+
+                window.addEventListener('storage', (event) => {
+                    if (event.key === STATE_KEY && event.newValue) {
+                        // In localStorage fallback, do not mark as online.
+                        const payload = JSON.parse(event.newValue);
+                        residentState = {
+                            ...createDefaultState(),
+                            ...payload,
+                            thresholds: {
+                                ...createDefaultState().thresholds,
+                                ...(payload?.thresholds || {})
+                            },
+                            subscribers: payload?.subscribers || {}
+                        };
+                        lastFirebaseResidentUpdateAt = 0;
+                        updateResidentUi();
+                    }
+                });
+            }
+        }
+
+
+        function respondResidentAudioPermission(allowed) {
+            isResidentAudioAllowed = allowed;
+
+            // Chrome requires AudioContext to be resumed after a user gesture.
+            // This function is directly called from user click handlers.
+            if (allowed) {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                try {
+                    if (audioCtx && audioCtx.state === 'suspended') {
+                        // resume() returns a Promise; we don't need to await inside click handler
+                        audioCtx.resume().catch((e) => {
+                            console.log('[Audio] resume failed', e);
+                        });
+                    }
+                } catch (e) {
+                    console.log('[Audio] resume exception', e);
+                }
+            } else {
+                if (audioCtx && audioCtx.state === 'running') {
+                    try { audioCtx.suspend(); } catch (e) { /* ignore */ }
+                }
+            }
+
+            document.getElementById('resident-audio-modal').classList.add('hidden');
+            document.getElementById('resident-audio-modal').classList.remove('flex');
+            localStorage.setItem('resident-audio', allowed ? 'enabled' : 'disabled');
+        }
+
+
+
+        function playResidentAlertTone(frequency, duration, volume) {
+            if (!isResidentAudioAllowed || !audioCtx) return;
+            // If browser kept AudioContext suspended, avoid throwing.
+            if (audioCtx.state === 'suspended') {
+                try {
+                    audioCtx.resume().catch(() => {});
+                } catch (e) {
+                    // ignore
+                }
+            }
+            try {
+                const osc = audioCtx.createOscillator();
+
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = frequency;
+                gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + duration);
+            } catch (error) {
+                console.log(error);
+            }
+        }
+
+        function runResidentAlertSoundLoop(state) {
+            if (currentResidentAlertState === state) return;
+            currentResidentAlertState = state;
+            clearInterval(soundInterval);
+            if (state === 'ALERT') {
+                soundInterval = setInterval(() => playResidentAlertTone(550, 0.2, 0.18), 1800);
+            } else if (state === 'DANGER') {
+                soundInterval = setInterval(() => playResidentAlertTone(800, 0.15, 0.35), 700);
+            } else if (state === 'EVACUATE') {
+                soundInterval = setInterval(() => playResidentAlertTone(1200, 0.35, 0.7), 300);
+            }
+        }
+
+        function showResidentPopup(title, message, type = 'warning') {
+            const popup = document.getElementById('resident-notification-popup');
+            const titleEl = document.getElementById('resident-popup-title');
+            const textEl = document.getElementById('resident-popup-text');
+            const iconEl = document.getElementById('resident-popup-icon');
+
+            titleEl.innerText = title;
+            textEl.innerText = message;
+            popup.classList.remove('hidden');
+            popup.classList.add('block');
+
+            if (type === 'critical') {
+                popup.classList.remove('bg-slate-900/95');
+                popup.classList.add('bg-red-700/95');
+                iconEl.className = 'mt-0.5 text-red-200 text-lg';
+                iconEl.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+            } else {
+                popup.classList.remove('bg-red-700/95');
+                popup.classList.add('bg-slate-900/95');
+                iconEl.className = 'mt-0.5 text-amber-400 text-lg';
+                iconEl.innerHTML = '<i class="fas fa-bell"></i>';
+            }
+
+            clearTimeout(window.residentPopupTimer);
+            window.residentPopupTimer = setTimeout(hideResidentPopup, 5000);
+        }
+
+        function hideResidentPopup() {
+            const popup = document.getElementById('resident-notification-popup');
+            popup.classList.add('hidden');
+            popup.classList.remove('block');
+        }
+
+        function triggerResidentBanner(message, isCritical = false) {
+            if (userDismissedResidentBanner) return;
+            const banner = document.getElementById('resident-alert-banner');
+            const msgEl = document.getElementById('resident-alert-message');
+            msgEl.innerHTML = message;
+            banner.className = 'fixed top-0 inset-x-0 z-50 text-white font-black text-center py-3.5 px-4 shadow-2xl transition-all duration-500 transform translate-y-0 flex items-center justify-center space-x-3';
+            if (isCritical) {
+                banner.classList.add('bg-red-600', 'animate-pulse-fast');
+            } else {
+                banner.classList.add('bg-orange-500');
+            }
+        }
+
+        function dismissResidentBanner() {
+            const banner = document.getElementById('resident-alert-banner');
+            banner.className = 'fixed top-0 inset-x-0 z-50 text-white font-black text-center py-3.5 px-4 shadow-2xl transition-all duration-500 transform -translate-y-full flex items-center justify-center space-x-3';
+            userDismissedResidentBanner = true;
+        }
+
+        function evaluateResidentAlertState(level, thresholds) {
+            let stateNow = 'SAFE';
+            if (level >= Number(thresholds.critical || 4.0)) stateNow = 'EVACUATE';
+            else if (level >= Number(thresholds.danger || 2.5)) stateNow = 'DANGER';
+            else if (level >= Number(thresholds.alert || 1.5)) stateNow = 'ALERT';
+
+            if (lastResidentAlertState !== stateNow) {
+                userDismissedResidentBanner = false;
+                lastResidentAlertState = stateNow;
+            }
+
+            if (stateNow === 'EVACUATE') {
+                triggerResidentBanner(`🚨 EVACUATE NOW: Water level has reached ${level.toFixed(2)}m.`, true);
+                showResidentPopup('Evacuation Alert', `Water level reached ${level.toFixed(2)}m. Move to safety immediately.`, 'critical');
+                runResidentAlertSoundLoop('EVACUATE');
+            } else if (stateNow === 'DANGER') {
+                triggerResidentBanner(`⚠️ WARNING: Water level is ${level.toFixed(2)}m and may become dangerous.`, false);
+                showResidentPopup('Danger Warning', `Water level is ${level.toFixed(2)}m. Prepare to evacuate if needed.`, 'warning');
+                runResidentAlertSoundLoop('DANGER');
+            } else if (stateNow === 'ALERT') {
+                const banner = document.getElementById('resident-alert-banner');
+                banner.className = 'fixed top-0 inset-x-0 z-50 text-white font-black text-center py-3.5 px-4 shadow-2xl transition-all duration-500 transform -translate-y-full flex items-center justify-center space-x-3';
+                runResidentAlertSoundLoop('ALERT');
+            } else {
+                const banner = document.getElementById('resident-alert-banner');
+                banner.className = 'fixed top-0 inset-x-0 z-50 text-white font-black text-center py-3.5 px-4 shadow-2xl transition-all duration-500 transform -translate-y-full flex items-center justify-center space-x-3';
+                runResidentAlertSoundLoop('SAFE');
+            }
+        }
+
+        function applyRemoteState(payload) {
+            const baseState = createDefaultState();
+            residentState = {
+
+                ...baseState,
+                ...payload,
+                thresholds: {
+                    ...baseState.thresholds,
+                    ...(payload?.thresholds || {})
+                },
+                subscribers: payload?.subscribers || {}
+            };
+
+            // Only refresh ONLINE freshness when payload explicitly contains a valid
+            // deviceStatusUpdatedAt token from ESP8266.
+            // If telemetry stops, this will stop updating and OFFLINE will appear after timeout.
+            const hasTelemetry = (payload && payload.waterLevel != null);
+            const deviceStatusOk = (payload && payload.deviceStatus === 'online');
+            const deviceStatusTs = payload && payload.deviceStatusUpdatedAt != null ? Number(payload.deviceStatusUpdatedAt) : null;
+            const hasValidDeviceStatusToken = hasTelemetry && deviceStatusOk && deviceStatusTs !== null && !Number.isNaN(deviceStatusTs);
+
+            // Always update ONLINE freshness when telemetry exists (keeps Online working even if
+            // firmware doesn't send deviceStatus yet).
+            if (hasTelemetry) {
+                lastFirebaseResidentUpdateAt = Date.now();
+            }
+
+            // If deviceStatus token exists, also update the more strict token-based freshness.
+            if (hasValidDeviceStatusToken) {
+                lastPayloadReceivedAt = Date.now();
+                lastPayloadDeviceStatusUpdatedAt = deviceStatusTs;
+            }
+
+            // Ensure gauge shows correct live value immediately on incoming payload
+            updateResidentUi();
+
+
+        }
+
+        function applyRemoteStateReadOnly(payload) {
+            // UI-only sync (no ONLINE freshness refresh)
+            const baseState = createDefaultState();
+            residentState = {
+                ...baseState,
+                ...payload,
+                thresholds: {
+                    ...baseState.thresholds,
+                    ...(payload?.thresholds || {})
+                },
+                subscribers: payload?.subscribers || {}
+            };
+            updateResidentUi();
+        }
+
+
+        // Derived gauge label should be purely based on ONLINE/OFFLINE state.
+        // Keep this consistent so the water number doesn't appear valid when offline.
+        function setResidentGaugeLabel(waterLevel, isCoreOnline) {
+            const gaugePercentEl = document.getElementById('gauge-percent');
+            if (!gaugePercentEl) return;
+
+            if (isCoreOnline) {
+                gaugePercentEl.classList.remove('opacity-70');
+                gaugePercentEl.innerText = `${waterLevel.toFixed(2)}m`;
+            } else {
+                gaugePercentEl.classList.add('opacity-70');
+                gaugePercentEl.innerText = `-- OFFLINE`;
+            }
+        }
+
+
+        // Safety: if some code path keeps online=true incorrectly, force OFFLINE after timeout.
+        // updateResidentUi() already uses isCoreOnline; this interval only triggers UI refresh.
+
+
+        function persistState(partialState) {
+            const mergedState = {
+                ...residentState,
+                ...partialState,
+                thresholds: {
+                    ...residentState.thresholds,
+                    ...(partialState?.thresholds || {})
+                },
+                lastUpdated: Date.now()
+            };
+            residentState = mergedState;
+
+            // Resident should NEVER overwrite admin/IoT waterLevel.
+            // Only allow subscriber updates to Firebase.
+            if (firebaseReady && firebaseDb && partialState && partialState.subscribers) {
+                firebaseDb.ref('mamatidSystem/subscribers').set(partialState.subscribers);
+                return;
+            }
+
+            // Local-only fallback (theme/audio/ack behavior)
+            localStorage.setItem(STATE_KEY, JSON.stringify(mergedState));
+        }
+
+        function updateResidentUi() {
+            const state = residentState;
+            const waterLevel = Number(state.waterLevel || 1.2);
+            const thresholds = state.thresholds || { alert: 1.5, danger: 2.5, critical: 4.0 };
+
+            const statusText = document.getElementById('system-status-text');
+            const now = Date.now();
+
+            // Harden ONLINE/OFFLINE: ONLY use in-memory last update.
+            // If hardware stops writing, lastFirebaseResidentUpdateAt will stop updating
+            // and we must flip to OFFLINE after timeout.
+            // Age-based freshness (A) + deviceStatus-based freshness (B)
+            const ageSinceLastPayloadMs = lastPayloadReceivedAt ? (now - lastPayloadReceivedAt) : Infinity;
+            let isCoreOnlineByDeviceStatus = false;
+            if (lastPayloadDeviceStatusUpdatedAt != null) {
+                // deviceStatusUpdatedAt is millis() from ESP8266; treat it as "freshness token"
+                // using relative age: we simply require that we received a payload recently.
+                isCoreOnlineByDeviceStatus = ageSinceLastPayloadMs < CORE_HEALTH_TIMEOUT_MS;
+            }
+
+            const isCoreOnlineByAge = ageSinceLastPayloadMs < CORE_HEALTH_TIMEOUT_MS;
+
+            // Use both signals:
+            // A = age freshness (lastPayloadReceivedAt)
+            // B = payload deviceStatus freshness token (deviceStatusUpdatedAt)
+            // If deviceStatus token exists, require BOTH.
+            // Else fallback to telemetry-based freshness (lastFirebaseResidentUpdateAt)
+            // so ONLINE still works even if firmware doesn't send deviceStatus yet.
+            const hasDeviceStatusToken = lastPayloadDeviceStatusUpdatedAt != null;
+            const ageBasedFallbackOnline = (lastFirebaseResidentUpdateAt && (now - lastFirebaseResidentUpdateAt) < CORE_HEALTH_TIMEOUT_MS);
+
+            const isCoreOnline = hasDeviceStatusToken
+                ? (isCoreOnlineByAge && isCoreOnlineByDeviceStatus)
+                : ageBasedFallbackOnline;
+
+
+
+
+
+            // Hard rule: even if stale payload still exists in residentState,
+            // when OFFLINE we must never show a “real” water reading.
+            const displayWaterLevel = isCoreOnline ? waterLevel : NaN;
+
+
+
+
+
+
+
+            // Update IoT online/offline tile + gauge label (auto-refresh; no reload needed)
+            const iotOnlineTile = document.querySelector('#tab-dashboard .grid .bg-white.border-2.border-slate-200');
+            const iotStatusEl = iotOnlineTile ? iotOnlineTile.querySelector('h4') : null;
+
+            if (iotStatusEl) {
+                // change text first
+                iotStatusEl.innerText = isCoreOnline ? 'Online / Active' : 'Offline';
+
+                // then change styling
+                iotOnlineTile.className = isCoreOnline
+                    ? 'bg-white border-2 border-slate-200 dark:bg-[#131f3d] dark:border-slate-700/60 rounded-2xl p-5 flex items-center justify-between shadow-sm'
+                    : 'bg-white border-2 border-red-200 dark:bg-[#131f3d] dark:border-red-900/60 rounded-2xl p-5 flex items-center justify-between shadow-sm';
+            }
+
+            // Gauge label should be based purely on ONLINE/OFFLINE.
+            // So it updates instantly and doesn't show stale data as “valid”.
+            setResidentGaugeLabel(isCoreOnline ? waterLevel : 0, isCoreOnline);
+
+
+            // Offline debugging info (to confirm why UI says Online)
+            try {
+                const debugOnline = document.getElementById('debug-online');
+                const debugDelta = document.getElementById('debug-delta');
+                const debugWater = document.getElementById('debug-water');
+                const debugLastUpdated = document.getElementById('debug-lastupdated');
+
+                if (debugOnline) debugOnline.innerText = `isCoreOnline=${isCoreOnline}`;
+                if (debugDelta) debugDelta.innerText = `deltaMs=${lastFirebaseResidentUpdateAt ? (now - lastFirebaseResidentUpdateAt) : 'N/A'}`;
+                if (debugWater) debugWater.innerText = `water=${waterLevel.toFixed(2)}m`;
+                if (debugLastUpdated) debugLastUpdated.innerText = `payload.lastUpdated=${state.lastUpdated || '—'}`;
+            } catch (e) { /* ignore */ }
+
+
+            document.getElementById('last-updated').innerText = new Date(state.lastUpdated || Date.now()).toLocaleTimeString();
+
+
+
+            // If offline, force the gauge visual to OFFLINE-like (dim, not alarming)
+            const gaugeFill = document.getElementById('dynamic-water');
+            const gaugePercentEl = document.getElementById('gauge-percent');
+            if (!isCoreOnline) {
+                // hard clamp + label
+                if (gaugeFill) {
+                    gaugeFill.style.height = `8%`;
+                    gaugeFill.classList.add('opacity-60');
+                    gaugeFill.style.filter = 'grayscale(0.8)';
+                }
+                if (gaugePercentEl) {
+                    gaugePercentEl.innerText = '-- OFFLINE';
+                }
+            } else {
+                if (gaugeFill) {
+                    gaugeFill.style.height = `${Math.max(8, (waterLevel / 5) * 100)}%`;
+                    gaugeFill.classList.remove('opacity-60');
+                    gaugeFill.style.filter = 'none';
+                }
+                // label is already set by setResidentGaugeLabel(), but keep consistent
+                if (gaugePercentEl) {
+                    gaugePercentEl.innerText = `${waterLevel.toFixed(2)}m`;
+                }
+            }
+
+
+
+            const badgeWarn = document.getElementById('badge-warn');
+            const badgeDanger = document.getElementById('badge-danger');
+            const badgeCrit = document.getElementById('badge-crit');
+
+            // Always dim badges first; then selectively un-dim only when online
+            [badgeWarn, badgeDanger, badgeCrit].forEach(el => el.classList.add('opacity-30'));
+
+            if (!isCoreOnline) {
+                statusText.innerText = 'OFFLINE';
+                statusText.parentElement.className = "bg-red-100 border-2 border-red-600 text-red-800 dark:bg-red-950/40 dark:text-red-300 px-4 py-2 rounded-xl flex items-center shadow-sm";
+
+                const banner = document.getElementById('resident-alert-banner');
+                banner.className = 'fixed top-0 inset-x-0 z-50 text-white font-black text-center py-3.5 px-4 shadow-2xl transition-all duration-500 transform -translate-y-full flex items-center justify-center space-x-3';
+
+                runResidentAlertSoundLoop('SAFE');
+
+                // IMPORTANT: do NOT override badges/status based on waterLevel thresholds when offline.
+                // Return early to prevent the later ALERT/WARNING/CRITICAL override block.
+                return;
+            }
+
+            // Online path
+            evaluateResidentAlertState(waterLevel, thresholds);
+
+            // Force banner to hidden after evaluation (tones are handled by evaluateResidentAlertState)
+            const banner = document.getElementById('resident-alert-banner');
+            banner.className = 'fixed top-0 inset-x-0 z-50 text-white font-black text-center py-3.5 px-4 shadow-2xl transition-all duration-500 transform -translate-y-full flex items-center justify-center space-x-3';
+
+            // Set status/badges based on thresholds (only when online)
+            if (waterLevel >= Number(thresholds.critical || 4.0)) {
+                statusText.innerText = "CRITICAL";
+                statusText.parentElement.className = "bg-red-100 border-2 border-red-600 text-red-800 dark:bg-red-950/40 dark:text-red-300 px-4 py-2 rounded-xl flex items-center shadow-sm";
+                badgeCrit.classList.remove('opacity-30');
+            } else if (waterLevel >= Number(thresholds.danger || 2.5)) {
+                statusText.innerText = "WARNING";
+                statusText.parentElement.className = "bg-orange-100 border-2 border-orange-500 text-orange-800 dark:bg-orange-950/40 dark:text-orange-300 px-4 py-2 rounded-xl flex items-center shadow-sm";
+                badgeDanger.classList.remove('opacity-30');
+            } else if (waterLevel >= Number(thresholds.alert || 1.5)) {
+                statusText.innerText = "ALERT";
+                statusText.parentElement.className = "bg-yellow-100 border-2 border-yellow-500 text-yellow-800 dark:bg-yellow-950/40 dark:text-yellow-300 px-4 py-2 rounded-xl flex items-center shadow-sm";
+                badgeWarn.classList.remove('opacity-30');
+            } else {
+                statusText.innerText = "NORMAL";
+                statusText.parentElement.className = "bg-emerald-100 border-2 border-emerald-500 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 px-4 py-2 rounded-xl flex items-center shadow-sm";
+            }
+
+            if (liveChartInstance) {
+                const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                liveChartInstance.data.labels.push(timeStr);
+                liveChartInstance.data.datasets[0].data.push(waterLevel);
+
+                if (liveChartInstance.data.labels.length > 8) {
+                    liveChartInstance.data.labels.shift();
+                    liveChartInstance.data.datasets[0].data.shift();
+                }
+                liveChartInstance.update();
+            }
+
+            // Update persistent announcement area with acknowledge behavior
+            try {
+                const annText = document.getElementById('resident-announcement-text');
+                const annTime = document.getElementById('resident-announcement-timestamp');
+                const annBox = document.getElementById('resident-announcement-box');
+                const ackBtn = document.getElementById('resident-ack-btn');
+                const last = state.lastUpdated || Date.now();
+                if (annText) annText.innerText = state.lastBroadcast || 'No announcements at this time.';
+                if (annTime) annTime.innerText = 'Last updated: ' + new Date(last).toLocaleString();
+
+                const ackKey = localStorage.getItem('resident-announcement-ack') || '0';
+                if (Number(ackKey) === Number(last) || !state.lastBroadcast) {
+                    // Already acknowledged or nothing to show
+                    if (annBox) annBox.classList.add('opacity-40');
+                    if (ackBtn) { ackBtn.innerText = 'Acknowledged'; ackBtn.disabled = true; ackBtn.classList.remove('bg-emerald-600'); ackBtn.classList.add('bg-slate-400'); }
+                } else {
+                    if (annBox) annBox.classList.remove('opacity-40');
+                    if (ackBtn) { ackBtn.innerText = 'Acknowledge'; ackBtn.disabled = false; ackBtn.classList.remove('bg-slate-400'); ackBtn.classList.add('bg-emerald-600'); }
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        function acknowledgeAnnouncement() {
+            try {
+                const ts = residentState.lastUpdated || Date.now();
+                localStorage.setItem('resident-announcement-ack', String(ts));
+                const ackBtn = document.getElementById('resident-ack-btn');
+                const annBox = document.getElementById('resident-announcement-box');
+                if (ackBtn) { ackBtn.innerText = 'Acknowledged'; ackBtn.disabled = true; ackBtn.classList.remove('bg-emerald-600'); ackBtn.classList.add('bg-slate-400'); }
+                if (annBox) annBox.classList.add('opacity-40');
+            } catch (e) { console.log(e); }
+        }
+
+        // DARK MODE TOGGLE LOGIC
+        function toggleDarkMode() {
+            const htmlElement = document.documentElement;
+            const iconDesktop = document.getElementById('theme-icon-desktop');
+            const iconMobile = document.getElementById('theme-icon-mobile');
+            
+            if (htmlElement.classList.contains('dark')) {
+                htmlElement.classList.remove('dark');
+                iconDesktop.className = "fas fa-moon";
+                iconMobile.className = "fas fa-moon";
+                localStorage.setItem('theme', 'light');
+                updateChartTheme(false);
+            } else {
+                htmlElement.classList.add('dark');
+                iconDesktop.className = "fas fa-sun text-yellow-400";
+                iconMobile.className = "fas fa-sun text-yellow-400";
+                localStorage.setItem('theme', 'dark');
+                updateChartTheme(true);
+            }
+        }
+
+        function updateChartTheme(isDark) {
+            if (!liveChartInstance) return;
+            const gridColor = isDark ? '#273554' : '#e2e8f0';
+            const textColor = isDark ? '#cbd5e1' : '#0f2d59';
+            
+            liveChartInstance.options.scales.y.grid.color = gridColor;
+            liveChartInstance.options.scales.x.grid.color = gridColor;
+            liveChartInstance.options.scales.y.ticks.color = textColor;
+            liveChartInstance.options.scales.x.ticks.color = textColor;
+            liveChartInstance.data.datasets[0].borderColor = isDark ? '#f59e0b' : '#0f2d59';
+            liveChartInstance.data.datasets[0].backgroundColor = isDark ? 'rgba(245, 158, 11, 0.05)' : 'rgba(15, 45, 89, 0.05)';
+            liveChartInstance.update();
+        }
+
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobile-menu');
+            const icon = document.getElementById('burger-icon');
+            
+            if (menu.classList.contains('hidden')) {
+                menu.classList.remove('hidden');
+                icon.className = "fas fa-times text-xl";
+            } else {
+                menu.classList.add('hidden');
+                icon.className = "fas fa-bars text-xl";
+            }
+        }
+
+        function switchTab(tabId) {
+            document.getElementById('mobile-menu').classList.add('hidden');
+            document.getElementById('burger-icon').className = "fas fa-bars text-xl";
+
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                btn.className = "nav-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition text-slate-200 hover:bg-[#1a447c] hover:text-white dark:text-slate-300 dark:hover:bg-[#132f5c]";
+            });
+            document.querySelectorAll('.mb-nav-btn').forEach(btn => {
+                btn.className = "mb-nav-btn w-full text-left flex items-center space-x-4 px-4 py-4 rounded-xl text-base font-bold transition text-slate-200 hover:bg-[#133463]";
+            });
+
+            document.getElementById(`tab-${tabId}`).classList.add('active');
+
+            document.getElementById(`btn-${tabId}`).className = `nav-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition bg-[#e0a916] text-[#0f2d59] shadow`;
+            document.getElementById(`mb-btn-${tabId}`).className = `mb-nav-btn w-full text-left flex items-center space-x-4 px-4 py-4 rounded-xl text-base font-black transition bg-[#e0a916] text-[#0f2d59] shadow`;
+
+            const titles = {
+                'dashboard': 'Website Overview',
+                'telemetry': 'Live Status',
+                'map': 'Device Sensor Location',
+                'announcements': 'Public Advisories',
+                'sms': 'E-Siren Registration'
+            };
+            document.getElementById('top-title').innerText = titles[tabId];
+            document.getElementById('top-breadcrumbs').innerText = `MAMATID COMMUNITY / ${titles[tabId]}`;
+
+            if (tabId === 'map' && leafletMapInstance) {
+                setTimeout(() => { leafletMapInstance.invalidateSize(); }, 200);
+            }
+        }
+
+        function registerSMS(event) {
+            event.preventDefault();
+            const phone = document.getElementById('sms-phone-input').value;
+            const checkFormat = /^09\d{9}$/;
+
+            if(!checkFormat.test(phone)) {
+                alert("Invalid format. Please make sure the entry contains 11 digits and starts with '09'.");
+                return;
+            }
+
+            const subscribers = { ...(residentState.subscribers || {}) };
+            subscribers[phone] = { phone, registeredAt: Date.now(), status: 'active' };
+            persistState({ subscribers, smsCount: Object.keys(subscribers).length, lastOperation: `New subscriber ${phone}` });
+
+            alert(`Registration confirmed. The contact number (${phone}) has been securely enrolled in the system.`);
+            document.getElementById('sms-phone-input').value = "";
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme === 'dark') {
+                document.documentElement.classList.add('dark');
+                document.getElementById('theme-icon-desktop').className = "fas fa-sun text-yellow-400";
+                document.getElementById('theme-icon-mobile').className = "fas fa-sun text-yellow-400";
+            }
+
+            const audioPref = localStorage.getItem('resident-audio');
+            const audioModal = document.getElementById('resident-audio-modal');
+            if (audioPref === 'enabled') {
+                respondResidentAudioPermission(true);
+            } else if (audioPref === 'disabled') {
+                respondResidentAudioPermission(false);
+            } else {
+                audioModal.classList.remove('hidden');
+                audioModal.classList.add('flex');
+            }
+
+            leafletMapInstance = L.map('leaflet-map').setView([14.2120, 121.1444], 15);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMapInstance);
+            L.marker([14.2155, 121.1465]).addTo(leafletMapInstance).bindPopup('<b>Primary Telemetry Station Alpha</b>');
+
+            const ctx = document.getElementById('liveChart').getContext('2d');
+            const isDarkNow = document.documentElement.classList.contains('dark');
+            
+            liveChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        borderColor: isDarkNow ? '#f59e0b' : '#0f2d59',
+                        backgroundColor: isDarkNow ? 'rgba(245, 158, 11, 0.05)' : 'rgba(15, 45, 89, 0.05)',
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { min: 0, max: 5, grid: { color: isDarkNow ? '#273554' : '#e2e8f0' }, ticks: { color: isDarkNow ? '#cbd5e1' : '#0f2d59', font: { weight: 'bold' } } },
+                        x: { grid: { color: isDarkNow ? '#273554' : '#e2e8f0' }, ticks: { color: isDarkNow ? '#cbd5e1' : '#0f2d59', font: { weight: 'bold' } } }
+                    }
+                }
+            });
+
+            initResidentSync();
+        });
+    </script>
+</body>
+</html>
